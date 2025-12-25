@@ -1,0 +1,40 @@
+{
+  "name": "Keka Pro",
+  "description": "Extension to modify Keka attendance page elements and more",
+  "version": "3.0",
+  "manifest_version": 3,
+  "action": {
+    "default_popup": "src/popup/index.html",
+    "default_icon": {
+      "16": "src/assets/icons/favicon.png",
+      "32": "src/assets/icons/favicon.png",
+      "48": "src/assets/icons/favicon.png",
+      "128": "src/assets/icons/favicon.png"
+    }
+  },
+  "icons": {
+    "16": "src/assets/icons/favicon.png",
+    "32": "src/assets/icons/favicon.png",
+    "48": "src/assets/icons/favicon.png",
+    "128": "src/assets/icons/favicon.png"
+  },
+  "background": {
+    "service_worker": "src/background/background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://*.keka.com/*"],
+      "js": ["src/content/content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "permissions": [
+    "activeTab",
+    "storage",
+    "alarms",
+    "notifications"
+  ],
+  "host_permissions": [
+    "https://*.keka.com/*"
+  ]
+}
