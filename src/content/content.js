@@ -514,7 +514,7 @@ async function handleDetectedClockIn() {
             console.log('Keka Pro: Auto clock-out scheduled successfully');
             
             // Show a subtle notification
-            showNotification('Auto clock-out scheduled for 8 hours 1 minute from now', 'success');
+            showNotification('Auto clock-out scheduled for 8 hours of effective work time', 'success');
         } else {
             console.error('Keka Pro: Failed to schedule auto clock-out:', scheduleResponse?.message);
         }

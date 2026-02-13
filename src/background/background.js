@@ -236,7 +236,7 @@ class KekaProBackground {
                                     type: 'basic',
                                     iconUrl: 'src/assets/icons/favicon.png',
                                     title: 'Keka Pro - Auto Clock-out',
-                                    message: 'You have been automatically clocked out after 8 hours 1 minute.'
+                                    message: 'You have been automatically clocked out after completing 8 hours of effective work time.'
                                 });
                                 console.log('Keka Pro: Auto clock-out notification sent');
                             }
@@ -261,32 +261,105 @@ class KekaProBackground {
     }
 
     /**
-     * Schedule automatic clock-out after 8 hours and 1 minute
+     * Schedule automatic clock-out after 8 hours of EFFECTIVE time
      */
     async scheduleAutoClockOut() {
         try {
             // Cancel any existing auto clock-out
             await this.cancelAutoClockOut();
             
-            const clockInTime = new Date();
-            const autoClockOutTime = new Date(clockInTime.getTime() + (8 * 60 + 1) * 60 * 1000); // 8 hours 1 minute
+            // Get current attendance data from the active Keka tab
+            const tabs = await chrome.tabs.query({ url: 'https://*.keka.com/*' });
+            
+            let effectiveMinutes = 0;
+            let grossMinutes = 0;
+            
+            if (tabs.length > 0) {
+                try {
+                    const response = await chrome.tabs.sendMessage(tabs[0].id, {
+                        action: 'getAttendanceData'
+                    });
+                    
+                    if (response && response.success && response.data) {
+                        effectiveMinutes = response.data.effectiveMinutes || 0;
+                        grossMinutes = response.data.grossMinutes || 0;
+                        console.log(`Keka Pro: Current attendance - Effective: ${effectiveMinutes}m, Gross: ${grossMinutes}m`);
+                    }
+                } catch (error) {
+                    console.log('Keka Pro: Could not get attendance data, using defaults:', error);
+                }
+            }
+            
+            // Calculate remaining effective minutes needed to reach 8 hours (480 minutes)
+            const remainingEffectiveMinutes = 480 - effectiveMinutes;
+            
+            // If already at or past 8 hours, clock out in 1 minute
+            if (remainingEffectiveMinutes <= 0) {
+                console.log('Keka Pro: Already at 8 hours effective time, scheduling immediate clock-out');
+                const autoClockOutTime = new Date(Date.now() + 1 * 60 * 1000);
+                
+                const taskData = {
+                    id: 'auto-clockout',
+                    action: 'out',
+                    scheduledTime: autoClockOutTime,
+                    status: 'pending',
+                    createdAt: new Date(),
+                    isAutoClockOut: true
+                };
+                
+                const alarmName = 'keka-auto-clockout';
+                await chrome.alarms.create(alarmName, { delayInMinutes: 1 });
+                await chrome.storage.local.set({
+                    [alarmName]: taskData,
+                    autoClockOutScheduled: true,
+                    autoClockOutTime: autoClockOutTime.toISOString()
+                });
+                
+                return { success: true, message: 'Auto clock-out scheduled (8 hours completed)', scheduledTime: autoClockOutTime };
+            }
+            
+            // Calculate break rate and estimate when 8 hours effective will be reached
+            const breakMinutes = grossMinutes - effectiveMinutes;
+            let estimatedAdditionalGrossMinutes;
+            
+            if (effectiveMinutes > 0) {
+                // Calculate break rate based on current data
+                const breakRate = breakMinutes / effectiveMinutes;
+                const reasonableBreakRate = Math.max(0, Math.min(breakRate, 2)); // Cap at 200%
+                
+                // Estimate additional gross time needed (including future breaks)
+                estimatedAdditionalGrossMinutes = remainingEffectiveMinutes * (1 + reasonableBreakRate);
+                console.log(`Keka Pro: Break rate: ${(breakRate * 100).toFixed(1)}%, Estimated additional gross time: ${estimatedAdditionalGrossMinutes.toFixed(1)}m`);
+            } else {
+                // No effective time yet, assume 10% break rate
+                estimatedAdditionalGrossMinutes = remainingEffectiveMinutes * 1.1;
+                console.log(`Keka Pro: No effective time yet, using default 10% break rate. Estimated gross time: ${estimatedAdditionalGrossMinutes.toFixed(1)}m`);
+            }
+            
+            // Add 1 minute buffer to ensure we're past 8 hours
+            const delayInMinutes = estimatedAdditionalGrossMinutes + 1;
+            const autoClockOutTime = new Date(Date.now() + delayInMinutes * 60 * 1000);
             
             const taskData = {
                 id: 'auto-clockout',
                 action: 'out',
                 scheduledTime: autoClockOutTime,
                 status: 'pending',
-                createdAt: clockInTime,
-                isAutoClockOut: true
+                createdAt: new Date(),
+                isAutoClockOut: true,
+                basedOnEffectiveTime: true,
+                currentEffectiveMinutes: effectiveMinutes,
+                remainingEffectiveMinutes: remainingEffectiveMinutes
             };
             
             const alarmName = 'keka-auto-clockout';
-            const delayInMinutes = (autoClockOutTime.getTime() - Date.now()) / (1000 * 60);
-            
-            // Chrome alarms have a minimum delay of 1 minute, ensure we meet this requirement
             const actualDelay = Math.max(delayInMinutes, 1);
             
-            console.log(`Keka Pro: Scheduling auto clock-out with delay: ${actualDelay} minutes (${delayInMinutes} calculated)`);
+            console.log(`Keka Pro: Scheduling auto clock-out based on EFFECTIVE time:`);
+            console.log(`  - Current effective: ${effectiveMinutes}m (${(effectiveMinutes/60).toFixed(1)}h)`);
+            console.log(`  - Remaining effective needed: ${remainingEffectiveMinutes}m (${(remainingEffectiveMinutes/60).toFixed(1)}h)`);
+            console.log(`  - Estimated delay: ${actualDelay.toFixed(1)} minutes (${(actualDelay/60).toFixed(1)}h)`);
+            console.log(`  - Scheduled for: ${autoClockOutTime.toLocaleString()}`);
             
             // Create Chrome alarm
             await chrome.alarms.create(alarmName, {
@@ -304,13 +377,15 @@ class KekaProBackground {
             // Store task data
             await chrome.storage.local.set({
                 [alarmName]: taskData,
-                clockInTime: clockInTime.toISOString(),
                 autoClockOutScheduled: true,
                 autoClockOutTime: autoClockOutTime.toISOString()
             });
             
-            console.log(`Keka Pro: Auto clock-out scheduled for ${autoClockOutTime.toLocaleString()}`);
-            return { success: true, message: 'Auto clock-out scheduled for 8 hours 1 minute', scheduledTime: autoClockOutTime };
+            return { 
+                success: true, 
+                message: `Auto clock-out scheduled for 8 hours effective time (in ~${(actualDelay/60).toFixed(1)}h)`, 
+                scheduledTime: autoClockOutTime 
+            };
             
         } catch (error) {
             console.error('Keka Pro: Error scheduling auto clock-out:', error);
