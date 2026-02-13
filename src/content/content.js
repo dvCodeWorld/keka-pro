@@ -3,7 +3,8 @@
  * Enhanced with real clock-in/clock-out functionality
  */
 
-import { REQUIRED_WORK_MINUTES, REQUIRED_WORK_HOURS, WORK_HOURS_LABEL } from '../config/constants.js';
+// Constants are loaded from constants.js (loaded before this script in manifest.json)
+// Available global variables: REQUIRED_WORK_MINUTES, REQUIRED_WORK_HOURS, WORK_HOURS_LABEL
 
 // Simple wait for element function
 function waitForElement(selector, timeout = 10000) {
@@ -510,11 +511,26 @@ function checkClockInStatus() {
 
 // Handle when we detect user is clocked in
 async function handleDetectedClockIn() {
+    // Check if extension context is valid before doing anything
+    if (!chrome.runtime?.id) {
+        console.log('Keka Pro: Extension context invalidated, skipping clock-in handling');
+        return;
+    }
+    
     try {
         // Check if auto clock-out is already scheduled
-        const response = await chrome.runtime.sendMessage({
-            action: 'debugAlarms'
-        });
+        let response;
+        try {
+            response = await chrome.runtime.sendMessage({
+                action: 'debugAlarms'
+            });
+        } catch (error) {
+            if (error.message?.includes('Extension context invalidated')) {
+                console.log('Keka Pro: Extension context invalidated during debugAlarms check');
+                return;
+            }
+            throw error;
+        }
         
         if (response && response.success) {
             const hasAutoClockOut = response.debugInfo.kekaAlarms.some(alarm => 
@@ -530,9 +546,18 @@ async function handleDetectedClockIn() {
         console.log('Keka Pro: Detected user is clocked in, scheduling auto clock-out');
         
         // Schedule auto clock-out
-        const scheduleResponse = await chrome.runtime.sendMessage({
-            action: 'clockInSuccess'
-        });
+        let scheduleResponse;
+        try {
+            scheduleResponse = await chrome.runtime.sendMessage({
+                action: 'clockInSuccess'
+            });
+        } catch (error) {
+            if (error.message?.includes('Extension context invalidated')) {
+                console.log('Keka Pro: Extension context invalidated during clockInSuccess');
+                return;
+            }
+            throw error;
+        }
         
         if (scheduleResponse && scheduleResponse.success) {
             console.log('Keka Pro: Auto clock-out scheduled successfully');
@@ -577,6 +602,12 @@ async function handleDetectedClockOut() {
 
 // Check attendance data and start early clock-out reminders if needed
 async function checkAndStartEarlyClockOutReminders(attendanceData) {
+    // Check if extension context is valid before doing anything
+    if (!chrome.runtime?.id) {
+        console.log('Keka Pro: Extension context invalidated, skipping early clock-out check');
+        return;
+    }
+    
     try {
         const effectiveMinutes = attendanceData.effectiveMinutes || 0;
         const grossMinutes = attendanceData.grossMinutes || 0;
@@ -594,13 +625,22 @@ async function checkAndStartEarlyClockOutReminders(attendanceData) {
         const remainingMinutes = REQUIRED_WORK_MINUTES - effectiveMinutes;
         console.log(`Keka Pro: Early clock-out! Remaining: ${remainingMinutes}m (${(remainingMinutes/60).toFixed(1)}h)`);
         
-        const response = await chrome.runtime.sendMessage({
-            action: 'earlyClockOut',
-            attendanceData: {
-                effectiveMinutes,
-                grossMinutes
+        let response;
+        try {
+            response = await chrome.runtime.sendMessage({
+                action: 'earlyClockOut',
+                attendanceData: {
+                    effectiveMinutes,
+                    grossMinutes
+                }
+            });
+        } catch (error) {
+            if (error.message?.includes('Extension context invalidated')) {
+                console.log('Keka Pro: Extension context invalidated during earlyClockOut');
+                return;
             }
-        });
+            throw error;
+        }
         
         if (response && response.success) {
             console.log('Keka Pro: Early clock-out reminders started successfully');
@@ -617,13 +657,28 @@ async function checkAndStartEarlyClockOutReminders(attendanceData) {
 
 // Stop early clock-out reminders (called when user clocks back in)
 async function stopEarlyClockOutReminders() {
+    // Check if extension context is valid before doing anything
+    if (!chrome.runtime?.id) {
+        console.log('Keka Pro: Extension context invalidated, skipping reminder stop');
+        return;
+    }
+    
     try {
         console.log('Keka Pro: Stopping early clock-out reminders');
         
         // Send message to background to stop reminders
-        const response = await chrome.runtime.sendMessage({
-            action: 'debugAlarms'
-        });
+        let response;
+        try {
+            response = await chrome.runtime.sendMessage({
+                action: 'debugAlarms'
+            });
+        } catch (error) {
+            if (error.message?.includes('Extension context invalidated')) {
+                console.log('Keka Pro: Extension context invalidated during debugAlarms check');
+                return;
+            }
+            throw error;
+        }
         
         if (response && response.success) {
             const hasEarlyClockOutReminder = response.debugInfo.kekaAlarms.some(alarm => 

@@ -1,8 +1,10 @@
 /**
- * Keka Pro Extension - Configuration Constants
+ * Keka Pro Extension - Configuration Constants (ES6 Module Version)
  * 
  * This file contains all centralized configuration values for the extension.
- * Modify these values to customize the extension behavior for your organization.
+ * This is the ES6 module version used by the background service worker.
+ * 
+ * For content scripts, see constants.js (non-module version).
  */
 
 /**
@@ -35,7 +37,7 @@
  * @type {number}
  * @default 8
  */
-const REQUIRED_WORK_HOURS = 8;
+export const REQUIRED_WORK_HOURS = 8;
 
 // ============================================================================
 // DERIVED VALUES - DO NOT MODIFY (automatically calculated from above)
@@ -46,13 +48,13 @@ const REQUIRED_WORK_HOURS = 8;
  * Automatically calculated from REQUIRED_WORK_HOURS
  * @type {number}
  */
-const REQUIRED_WORK_MINUTES = REQUIRED_WORK_HOURS * 60;
+export const REQUIRED_WORK_MINUTES = REQUIRED_WORK_HOURS * 60;
 
 /**
  * Display label for work hours (e.g., "8 Hours At:")
  * @type {string}
  */
-const WORK_HOURS_LABEL = `${REQUIRED_WORK_HOURS} Hours At:`;
+export const WORK_HOURS_LABEL = `${REQUIRED_WORK_HOURS} Hours At:`;
 
 // ============================================================================
 // OTHER CONFIGURATION OPTIONS
@@ -64,7 +66,7 @@ const WORK_HOURS_LABEL = `${REQUIRED_WORK_HOURS} Hours At:`;
  * @type {number}
  * @default 1
  */
-const AUTO_CLOCKOUT_BUFFER_MINUTES = 1;
+export const AUTO_CLOCKOUT_BUFFER_MINUTES = 1;
 
 /**
  * Early clock-out reminder interval (in minutes)
@@ -72,7 +74,7 @@ const AUTO_CLOCKOUT_BUFFER_MINUTES = 1;
  * @type {number}
  * @default 3
  */
-const EARLY_CLOCKOUT_REMINDER_INTERVAL = 3;
+export const EARLY_CLOCKOUT_REMINDER_INTERVAL = 3;
 
 /**
  * Regular clock-out reminder interval (in minutes)
@@ -80,4 +82,17 @@ const EARLY_CLOCKOUT_REMINDER_INTERVAL = 3;
  * @type {number}
  * @default 2
  */
-const REGULAR_CLOCKOUT_REMINDER_INTERVAL = 2;
+export const REGULAR_CLOCKOUT_REMINDER_INTERVAL = 2;
+
+// ============================================================================
+// EXPORT ALL CONSTANTS
+// ============================================================================
+
+export default {
+    REQUIRED_WORK_HOURS,
+    REQUIRED_WORK_MINUTES,
+    WORK_HOURS_LABEL,
+    AUTO_CLOCKOUT_BUFFER_MINUTES,
+    EARLY_CLOCKOUT_REMINDER_INTERVAL,
+    REGULAR_CLOCKOUT_REMINDER_INTERVAL
+};

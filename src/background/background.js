@@ -3,7 +3,7 @@
  * Handles scheduled tasks and persistent functionality
  */
 
-import { REQUIRED_WORK_MINUTES, REQUIRED_WORK_HOURS } from '../config/constants.js';
+import { REQUIRED_WORK_MINUTES, REQUIRED_WORK_HOURS } from '../config/constants-module.js';
 
 class KekaProBackground {
     constructor() {
