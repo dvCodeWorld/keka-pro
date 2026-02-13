@@ -61,6 +61,11 @@ class KekaProBackground {
                 sendResponse(cancelAutoResult);
                 break;
             
+            case 'earlyClockOut':
+                const earlyClockOutResult = await this.handleEarlyClockOut(request.attendanceData);
+                sendResponse(earlyClockOutResult);
+                break;
+            
             case 'debugAlarms':
                 const debugResult = await this.debugAlarms();
                 sendResponse(debugResult);
@@ -160,8 +165,14 @@ class KekaProBackground {
     async handleScheduledTask(alarm) {
         console.log(`Keka Pro: Alarm triggered: ${alarm.name} at ${new Date().toLocaleString()}`);
         
-        if (!alarm.name.startsWith('keka-task-') && alarm.name !== 'keka-auto-clockout' && alarm.name !== 'keka-clockout-reminder') {
+        if (!alarm.name.startsWith('keka-task-') && alarm.name !== 'keka-auto-clockout' && alarm.name !== 'keka-clockout-reminder' && alarm.name !== 'keka-early-clockout-reminder') {
             console.log(`Keka Pro: Ignoring non-Keka alarm: ${alarm.name}`);
+            return;
+        }
+        
+        // Handle early clock-out reminder notifications (before 8 hours effective)
+        if (alarm.name === 'keka-early-clockout-reminder') {
+            await this.handleEarlyClockOutReminderAlarm();
             return;
         }
         
@@ -437,6 +448,133 @@ class KekaProBackground {
     }
 
     /**
+     * Handle early clock-out (before 8 hours effective time)
+     * @param {Object} attendanceData - Current attendance data with effective and gross minutes
+     */
+    async handleEarlyClockOut(attendanceData) {
+        try {
+            const effectiveMinutes = attendanceData?.effectiveMinutes || 0;
+            const grossMinutes = attendanceData?.grossMinutes || 0;
+            
+            console.log(`Keka Pro: Checking early clock-out - Effective: ${effectiveMinutes}m, Gross: ${grossMinutes}m`);
+            
+            // Check if user has completed 8 hours (480 minutes) of effective time
+            if (effectiveMinutes >= 480) {
+                console.log('Keka Pro: 8 hours effective time completed, no reminders needed');
+                await this.stopEarlyClockOutReminders();
+                return { success: true, message: '8 hours completed, no reminders needed' };
+            }
+            
+            // User clocked out early, start reminders
+            const remainingMinutes = 480 - effectiveMinutes;
+            console.log(`Keka Pro: Early clock-out detected! Remaining effective time: ${remainingMinutes}m (${(remainingMinutes/60).toFixed(1)}h)`);
+            
+            // Start 3-minute interval reminders
+            await this.startEarlyClockOutReminders(effectiveMinutes, grossMinutes, remainingMinutes);
+            
+            return { 
+                success: true, 
+                message: `Early clock-out reminders started. ${remainingMinutes} minutes remaining.`,
+                remainingMinutes 
+            };
+            
+        } catch (error) {
+            console.error('Keka Pro: Error handling early clock-out:', error);
+            return { success: false, message: `Failed to handle early clock-out: ${error.message}` };
+        }
+    }
+
+    /**
+     * Start early clock-out reminder notifications every 3 minutes
+     * @param {number} effectiveMinutes - Current effective minutes worked
+     * @param {number} grossMinutes - Current gross minutes
+     * @param {number} remainingMinutes - Remaining effective minutes needed
+     */
+    async startEarlyClockOutReminders(effectiveMinutes, grossMinutes, remainingMinutes) {
+        try {
+            // Clear any existing early clock-out reminders first
+            await this.stopEarlyClockOutReminders();
+            
+            // Create recurring alarm for every 3 minutes
+            await chrome.alarms.create('keka-early-clockout-reminder', {
+                delayInMinutes: 3,
+                periodInMinutes: 3
+            });
+            
+            // Store reminder state with attendance data
+            await chrome.storage.local.set({
+                earlyClockOutRemindersActive: true,
+                earlyClockOutStartTime: new Date().toISOString(),
+                earlyClockOutEffectiveMinutes: effectiveMinutes,
+                earlyClockOutGrossMinutes: grossMinutes,
+                earlyClockOutRemainingMinutes: remainingMinutes
+            });
+            
+            console.log('Keka Pro: Early clock-out reminders started (every 3 minutes)');
+            console.log(`Keka Pro: You need ${remainingMinutes} more minutes (${(remainingMinutes/60).toFixed(1)}h) of effective work`);
+            
+            // Show immediate notification
+            await this.showEarlyClockOutNotification(remainingMinutes);
+            
+            return { success: true, message: 'Early clock-out reminders started' };
+            
+        } catch (error) {
+            console.error('Keka Pro: Error starting early clock-out reminders:', error);
+            return { success: false, message: 'Failed to start early clock-out reminders' };
+        }
+    }
+
+    /**
+     * Stop early clock-out reminder notifications
+     */
+    async stopEarlyClockOutReminders() {
+        try {
+            // Clear the recurring alarm
+            const cleared = await chrome.alarms.clear('keka-early-clockout-reminder');
+            
+            // Remove reminder state from storage
+            await chrome.storage.local.remove([
+                'earlyClockOutRemindersActive',
+                'earlyClockOutStartTime',
+                'earlyClockOutEffectiveMinutes',
+                'earlyClockOutGrossMinutes',
+                'earlyClockOutRemainingMinutes'
+            ]);
+            
+            console.log(`Keka Pro: Early clock-out reminders stopped (cleared: ${cleared})`);
+            return { success: true, message: 'Early clock-out reminders stopped' };
+            
+        } catch (error) {
+            console.error('Keka Pro: Error stopping early clock-out reminders:', error);
+            return { success: false, message: 'Failed to stop early clock-out reminders' };
+        }
+    }
+
+    /**
+     * Show early clock-out reminder notification
+     * @param {number} remainingMinutes - Remaining effective minutes needed
+     */
+    async showEarlyClockOutNotification(remainingMinutes) {
+        try {
+            const remainingHours = (remainingMinutes / 60).toFixed(1);
+            
+            await chrome.notifications.create('keka-early-clockout-notification', {
+                type: 'basic',
+                iconUrl: 'src/assets/icons/favicon.png',
+                title: 'Keka Pro - Clock In Reminder',
+                message: `You clocked out early! You still need ${remainingHours}h of effective work. Please clock in if you forgot!`,
+                priority: 2,
+                requireInteraction: false
+            });
+            
+            console.log('Keka Pro: Early clock-out reminder notification shown');
+            
+        } catch (error) {
+            console.error('Keka Pro: Error showing early clock-out notification:', error);
+        }
+    }
+
+    /**
      * Start clock-out reminder notifications every 2 minutes
      */
     async startClockOutReminders() {
@@ -482,6 +620,77 @@ class KekaProBackground {
         } catch (error) {
             console.error('Keka Pro: Error stopping clock-out reminders:', error);
             return { success: false, message: 'Failed to stop clock-out reminders' };
+        }
+    }
+
+    /**
+     * Handle early clock-out reminder alarm trigger
+     * Checks current status and shows notification if still needed
+     */
+    async handleEarlyClockOutReminderAlarm() {
+        try {
+            // Check if reminders are still active
+            const reminderState = await chrome.storage.local.get([
+                'earlyClockOutRemindersActive',
+                'earlyClockOutRemainingMinutes'
+            ]);
+            
+            if (!reminderState.earlyClockOutRemindersActive) {
+                console.log('Keka Pro: Early clock-out reminders not active, skipping');
+                return;
+            }
+            
+            // Get current attendance data to check if user has clocked back in
+            const tabs = await chrome.tabs.query({ url: 'https://*.keka.com/*' });
+            
+            if (tabs.length > 0) {
+                try {
+                    // Check if user is clocked in now
+                    const statusResponse = await chrome.tabs.sendMessage(tabs[0].id, {
+                        action: 'getStatus'
+                    });
+                    
+                    if (statusResponse && statusResponse.status === 'clocked_in') {
+                        console.log('Keka Pro: User clocked back in, stopping early clock-out reminders');
+                        await this.stopEarlyClockOutReminders();
+                        return;
+                    }
+                    
+                    // Get updated attendance data to check if 8 hours is now completed
+                    const dataResponse = await chrome.tabs.sendMessage(tabs[0].id, {
+                        action: 'getAttendanceData'
+                    });
+                    
+                    if (dataResponse && dataResponse.success && dataResponse.data) {
+                        const effectiveMinutes = dataResponse.data.effectiveMinutes || 0;
+                        
+                        if (effectiveMinutes >= 480) {
+                            console.log('Keka Pro: 8 hours effective time completed, stopping reminders');
+                            await this.stopEarlyClockOutReminders();
+                            return;
+                        }
+                        
+                        // Update remaining minutes
+                        const remainingMinutes = 480 - effectiveMinutes;
+                        await chrome.storage.local.set({
+                            earlyClockOutRemainingMinutes: remainingMinutes
+                        });
+                        
+                        // Show notification with updated remaining time
+                        await this.showEarlyClockOutNotification(remainingMinutes);
+                        return;
+                    }
+                } catch (error) {
+                    console.log('Keka Pro: Could not check status, showing reminder anyway:', error);
+                }
+            }
+            
+            // If we can't check status, show notification with stored remaining time
+            const remainingMinutes = reminderState.earlyClockOutRemainingMinutes || 480;
+            await this.showEarlyClockOutNotification(remainingMinutes);
+            
+        } catch (error) {
+            console.error('Keka Pro: Error handling early clock-out reminder alarm:', error);
         }
     }
 
