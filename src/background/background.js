@@ -3,6 +3,8 @@
  * Handles scheduled tasks and persistent functionality
  */
 
+import { REQUIRED_WORK_MINUTES, REQUIRED_WORK_HOURS } from '../config/constants.js';
+
 class KekaProBackground {
     constructor() {
         this.init();
@@ -247,7 +249,7 @@ class KekaProBackground {
                                     type: 'basic',
                                     iconUrl: 'src/assets/icons/favicon.png',
                                     title: 'Keka Pro - Auto Clock-out',
-                                    message: 'You have been automatically clocked out after completing 8 hours of effective work time.'
+                                    message: `You have been automatically clocked out after completing ${REQUIRED_WORK_HOURS} hours of effective work time.`
                                 });
                                 console.log('Keka Pro: Auto clock-out notification sent');
                             }
@@ -272,7 +274,7 @@ class KekaProBackground {
     }
 
     /**
-     * Schedule automatic clock-out after 8 hours of EFFECTIVE time
+     * Schedule automatic clock-out after required hours of EFFECTIVE time
      */
     async scheduleAutoClockOut() {
         try {
@@ -301,12 +303,12 @@ class KekaProBackground {
                 }
             }
             
-            // Calculate remaining effective minutes needed to reach 8 hours (480 minutes)
-            const remainingEffectiveMinutes = 480 - effectiveMinutes;
+            // Calculate remaining effective minutes needed to reach required work hours
+            const remainingEffectiveMinutes = REQUIRED_WORK_MINUTES - effectiveMinutes;
             
-            // If already at or past 8 hours, clock out in 1 minute
+            // If already at or past required hours, clock out in 1 minute
             if (remainingEffectiveMinutes <= 0) {
-                console.log('Keka Pro: Already at 8 hours effective time, scheduling immediate clock-out');
+                console.log(`Keka Pro: Already at ${REQUIRED_WORK_HOURS} hours effective time, scheduling immediate clock-out`);
                 const autoClockOutTime = new Date(Date.now() + 1 * 60 * 1000);
                 
                 const taskData = {
@@ -326,10 +328,10 @@ class KekaProBackground {
                     autoClockOutTime: autoClockOutTime.toISOString()
                 });
                 
-                return { success: true, message: 'Auto clock-out scheduled (8 hours completed)', scheduledTime: autoClockOutTime };
+                return { success: true, message: `Auto clock-out scheduled (${REQUIRED_WORK_HOURS} hours completed)`, scheduledTime: autoClockOutTime };
             }
             
-            // Calculate break rate and estimate when 8 hours effective will be reached
+            // Calculate break rate and estimate when required hours effective will be reached
             const breakMinutes = grossMinutes - effectiveMinutes;
             let estimatedAdditionalGrossMinutes;
             
@@ -347,7 +349,7 @@ class KekaProBackground {
                 console.log(`Keka Pro: No effective time yet, using default 10% break rate. Estimated gross time: ${estimatedAdditionalGrossMinutes.toFixed(1)}m`);
             }
             
-            // Add 1 minute buffer to ensure we're past 8 hours
+            // Add 1 minute buffer to ensure we're past required hours
             const delayInMinutes = estimatedAdditionalGrossMinutes + 1;
             const autoClockOutTime = new Date(Date.now() + delayInMinutes * 60 * 1000);
             
@@ -394,7 +396,7 @@ class KekaProBackground {
             
             return { 
                 success: true, 
-                message: `Auto clock-out scheduled for 8 hours effective time (in ~${(actualDelay/60).toFixed(1)}h)`, 
+                message: `Auto clock-out scheduled for ${REQUIRED_WORK_HOURS} hours effective time (in ~${(actualDelay/60).toFixed(1)}h)`, 
                 scheduledTime: autoClockOutTime 
             };
             
@@ -448,7 +450,7 @@ class KekaProBackground {
     }
 
     /**
-     * Handle early clock-out (before 8 hours effective time)
+     * Handle early clock-out (before required hours effective time)
      * @param {Object} attendanceData - Current attendance data with effective and gross minutes
      */
     async handleEarlyClockOut(attendanceData) {
@@ -458,15 +460,15 @@ class KekaProBackground {
             
             console.log(`Keka Pro: Checking early clock-out - Effective: ${effectiveMinutes}m, Gross: ${grossMinutes}m`);
             
-            // Check if user has completed 8 hours (480 minutes) of effective time
-            if (effectiveMinutes >= 480) {
-                console.log('Keka Pro: 8 hours effective time completed, no reminders needed');
+            // Check if user has completed required hours of effective time
+            if (effectiveMinutes >= REQUIRED_WORK_MINUTES) {
+                console.log(`Keka Pro: ${REQUIRED_WORK_HOURS} hours effective time completed, no reminders needed`);
                 await this.stopEarlyClockOutReminders();
-                return { success: true, message: '8 hours completed, no reminders needed' };
+                return { success: true, message: `${REQUIRED_WORK_HOURS} hours completed, no reminders needed` };
             }
             
             // User clocked out early, start reminders
-            const remainingMinutes = 480 - effectiveMinutes;
+            const remainingMinutes = REQUIRED_WORK_MINUTES - effectiveMinutes;
             console.log(`Keka Pro: Early clock-out detected! Remaining effective time: ${remainingMinutes}m (${(remainingMinutes/60).toFixed(1)}h)`);
             
             // Start 3-minute interval reminders
@@ -664,14 +666,14 @@ class KekaProBackground {
                     if (dataResponse && dataResponse.success && dataResponse.data) {
                         const effectiveMinutes = dataResponse.data.effectiveMinutes || 0;
                         
-                        if (effectiveMinutes >= 480) {
-                            console.log('Keka Pro: 8 hours effective time completed, stopping reminders');
+                        if (effectiveMinutes >= REQUIRED_WORK_MINUTES) {
+                            console.log(`Keka Pro: ${REQUIRED_WORK_HOURS} hours effective time completed, stopping reminders`);
                             await this.stopEarlyClockOutReminders();
                             return;
                         }
                         
                         // Update remaining minutes
-                        const remainingMinutes = 480 - effectiveMinutes;
+                        const remainingMinutes = REQUIRED_WORK_MINUTES - effectiveMinutes;
                         await chrome.storage.local.set({
                             earlyClockOutRemainingMinutes: remainingMinutes
                         });
@@ -686,7 +688,7 @@ class KekaProBackground {
             }
             
             // If we can't check status, show notification with stored remaining time
-            const remainingMinutes = reminderState.earlyClockOutRemainingMinutes || 480;
+            const remainingMinutes = reminderState.earlyClockOutRemainingMinutes || REQUIRED_WORK_MINUTES;
             await this.showEarlyClockOutNotification(remainingMinutes);
             
         } catch (error) {

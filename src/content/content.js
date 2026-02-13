@@ -3,6 +3,8 @@
  * Enhanced with real clock-in/clock-out functionality
  */
 
+import { REQUIRED_WORK_MINUTES, REQUIRED_WORK_HOURS, WORK_HOURS_LABEL } from '../config/constants.js';
+
 // Simple wait for element function
 function waitForElement(selector, timeout = 10000) {
     return new Promise((resolve) => {
@@ -82,8 +84,8 @@ function calculateClockInTime(grossMinutes) {
     return clockInTime.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
 }
 
-// Calculate when 8 hours will be completed based on clock-in time and break time
-function calculate8HourCompletion(grossMinutes, effectiveMinutes) {
+// Calculate when required work hours will be completed based on clock-in time and break time
+function calculateWorkHoursCompletion(grossMinutes, effectiveMinutes) {
     // Handle invalid input
     if (isNaN(grossMinutes) || isNaN(effectiveMinutes) || grossMinutes < 0 || effectiveMinutes < 0) {
         return 'Invalid Data';
@@ -92,8 +94,8 @@ function calculate8HourCompletion(grossMinutes, effectiveMinutes) {
     const now = new Date();
     const clockInTime = new Date(now.getTime() - (grossMinutes * 60000));
     
-    // Calculate remaining effective minutes needed to reach 8 hours (480 minutes)
-    const remainingEffectiveMinutes = 480 - effectiveMinutes;
+    // Calculate remaining effective minutes needed to reach required work hours
+    const remainingEffectiveMinutes = REQUIRED_WORK_MINUTES - effectiveMinutes;
     
     if (remainingEffectiveMinutes <= 0) {
         return 'Completed';
@@ -240,8 +242,8 @@ function addAttendanceInfo(retryCount = 0) {
     }
     
     // Calculate info
-    const remaining = 480 - data.effectiveMinutes; // 8 hours = 480 minutes
-    const completionTime = calculate8HourCompletion(data.grossMinutes, data.effectiveMinutes);
+    const remaining = REQUIRED_WORK_MINUTES - data.effectiveMinutes;
+    const completionTime = calculateWorkHoursCompletion(data.grossMinutes, data.effectiveMinutes);
     const breakTime = formatTime(data.grossMinutes - data.effectiveMinutes);
     const clockInTime = calculateClockInTime(data.grossMinutes);
     
@@ -258,7 +260,7 @@ function addAttendanceInfo(retryCount = 0) {
     `;
     
     infoBox.innerHTML = `
-        <p style="margin: 3px 0; color: ${remaining > 0 ? '#d63384' : '#198754'};"><strong>8 Hours At:</strong> ${completionTime}</p>
+        <p style="margin: 3px 0; color: ${remaining > 0 ? '#d63384' : '#198754'};"><strong>${WORK_HOURS_LABEL}</strong> ${completionTime}</p>
         <p style="margin: 3px 0; color: #6c757d;"><strong>Break Time:</strong> ${breakTime}</p>
         <p style="margin: 3px 0; color: #0d6efd;"><strong>Clock-in:</strong> ${clockInTime}</p>
     `;
@@ -536,7 +538,7 @@ async function handleDetectedClockIn() {
             console.log('Keka Pro: Auto clock-out scheduled successfully');
             
             // Show a subtle notification
-            showNotification('Auto clock-out scheduled for 8 hours of effective work time', 'success');
+            showNotification(`Auto clock-out scheduled for ${REQUIRED_WORK_HOURS} hours of effective work time`, 'success');
         } else {
             console.error('Keka Pro: Failed to schedule auto clock-out:', scheduleResponse?.message);
         }
@@ -549,7 +551,7 @@ async function handleDetectedClockIn() {
 // Handle when we detect user is clocked out
 async function handleDetectedClockOut() {
     try {
-        console.log('Keka Pro: User clocked out, checking if 8 hours effective time is completed');
+        console.log(`Keka Pro: User clocked out, checking if ${REQUIRED_WORK_HOURS} hours effective time is completed`);
         
         // Get current attendance data
         const attendanceData = getAttendanceData();
@@ -581,15 +583,15 @@ async function checkAndStartEarlyClockOutReminders(attendanceData) {
         
         console.log(`Keka Pro: Clock-out attendance check - Effective: ${effectiveMinutes}m (${(effectiveMinutes/60).toFixed(1)}h), Gross: ${grossMinutes}m`);
         
-        // Check if user has completed 8 hours (480 minutes) of effective time
-        if (effectiveMinutes >= 480) {
-            console.log('Keka Pro: 8 hours effective time completed! No reminders needed.');
-            showNotification('Great job! You completed 8 hours of effective work time.', 'success');
+        // Check if user has completed required hours of effective time
+        if (effectiveMinutes >= REQUIRED_WORK_MINUTES) {
+            console.log(`Keka Pro: ${REQUIRED_WORK_HOURS} hours effective time completed! No reminders needed.`);
+            showNotification(`Great job! You completed ${REQUIRED_WORK_HOURS} hours of effective work time.`, 'success');
             return;
         }
         
         // User clocked out early - notify background to start reminders
-        const remainingMinutes = 480 - effectiveMinutes;
+        const remainingMinutes = REQUIRED_WORK_MINUTES - effectiveMinutes;
         console.log(`Keka Pro: Early clock-out! Remaining: ${remainingMinutes}m (${(remainingMinutes/60).toFixed(1)}h)`);
         
         const response = await chrome.runtime.sendMessage({

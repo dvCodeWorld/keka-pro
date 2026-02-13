@@ -12,7 +12,8 @@ A powerful browser extension that enhances Keka attendance management with real 
 - **Background Execution** - Scheduled tasks run even when popup is closed
 
 ### **Smart Attendance Analytics**
-- **8-Hour Completion Tracker** - Shows exactly when you'll complete 8 hours
+- **Work Hours Completion Tracker** - Shows exactly when you'll complete required work hours
+- **Configurable Work Hours** - Easily change from 8 to 9 hours (or any value) in one place
 - **Break Time Calculator** - Displays total break time taken
 - **Clock-In Time Display** - Shows your actual clock-in time
 - **Effective vs Gross Hours** - Clear breakdown of your work hours
@@ -24,6 +25,12 @@ A powerful browser extension that enhances Keka attendance management with real 
 - **Tasks Tab** - View and manage scheduled attendance actions
 - **Compact Design** - All features accessible without scrolling (380×500px)
 - **Professional Styling** - Glass-morphism effects and gradient designs
+
+### **Intelligent Automation**
+- **Auto Clock-Out** - Automatically clocks out after completing required effective work hours
+- **Early Clock-Out Reminders** - Reminds you every 3 minutes if you clock out before completing required hours
+- **Smart Detection** - Automatically stops reminders when you clock back in or complete required hours
+- **Configurable Policy** - Single constant to change work hours policy (8h, 9h, 7.5h, etc.)
 
 ### **Enhanced User Experience**
 - **Keka-Native Interface** - UI designed to match Keka's look and feel
@@ -53,6 +60,10 @@ A powerful browser extension that enhances Keka attendance management with real 
    - Look for the Keka Pro icon in your browser toolbar
    - Navigate to your Keka attendance page
    - Click the extension icon to open the popup
+
+4. **Configure Work Hours (Optional)**
+   - Default is 8 hours of effective work time
+   - To change (e.g., to 9 hours), see [Configuration](#-configuration) section below
 
 ## 🎯 Usage
 
@@ -137,13 +148,64 @@ The extension features a modern 3-tab interface for organized functionality:
    - Works even when browser is closed
    - Retry mechanism for failed attempts
 
+## ⚙️ Configuration
+
+### **Changing Work Hours Policy**
+
+The extension uses a **centralized configuration** system. To change the required work hours from 8 to any other value (e.g., 9 hours, 7.5 hours):
+
+**ONE FILE. ONE LINE. ONE NUMBER.**
+
+1. Open `src/config/constants.js`
+2. Find line 33: `export const REQUIRED_WORK_HOURS = 8;`
+3. Change `8` to your required hours (e.g., `9` for 9 hours)
+4. Save and reload the extension
+
+**Example:**
+```javascript
+// For 9-hour work policy
+export const REQUIRED_WORK_HOURS = 9;
+
+// For 7.5-hour work policy
+export const REQUIRED_WORK_HOURS = 7.5;
+```
+
+**What Changes Automatically:**
+- ✅ Auto clock-out timing (clocks out after X hours effective time)
+- ✅ Early clock-out reminders (reminds if you clock out before X hours)
+- ✅ Display labels ("X Hours At:" on attendance page)
+- ✅ All notifications and messages
+- ✅ All time calculations
+
+**Detailed Guide:** See `HOW_TO_CHANGE_WORK_HOURS.md` for comprehensive instructions.
+
+### **Other Configuration Options**
+
+In the same `constants.js` file, you can also customize:
+
+```javascript
+// Auto clock-out buffer (default: 1 minute)
+export const AUTO_CLOCKOUT_BUFFER_MINUTES = 1;
+
+// Early clock-out reminder interval (default: 3 minutes)
+export const EARLY_CLOCKOUT_REMINDER_INTERVAL = 3;
+
+// Regular clock-out reminder interval (default: 2 minutes)
+export const REGULAR_CLOCKOUT_REMINDER_INTERVAL = 2;
+```
+
 ## 🏗️ Project Structure
 
 ```
 keka-pro-extension/
 ├── manifest.json                 # Extension configuration (Manifest V3)
 ├── package.json                  # Project metadata and scripts
+├── HOW_TO_CHANGE_WORK_HOURS.md  # Guide for changing work hours policy
+├── EARLY_CLOCKOUT_REMINDER_TEST.md  # Test plan for early clock-out feature
+├── test-early-clockout.js       # Automated test script
 ├── src/
+│   ├── config/
+│   │   └── constants.js         # ⚙️ CENTRALIZED CONFIGURATION (change work hours here)
 │   ├── popup/
 │   │   ├── index.html           # Simple welcome page
 │   │   ├── main.html            # Main popup interface with tabbed design
@@ -173,6 +235,13 @@ keka-pro-extension/
 
 ### **Key Components**
 
+#### **Configuration** (`config/constants.js`)
+- **Centralized Work Hours** - Single source of truth for required work hours policy
+- **Auto-Calculated Values** - Automatically derives minutes and labels from hours
+- **Configurable Intervals** - Customizable reminder and buffer times
+- **Well Documented** - Comprehensive comments explaining each constant
+- **ES6 Module** - Exports constants for use across all scripts
+
 #### **Content Script** (`content.js`)
 - **DOM Monitoring** - Watches Keka page for attendance elements with MutationObserver
 - **Button Interaction** - Finds and clicks clock-in/out buttons with intelligent selectors
@@ -180,7 +249,8 @@ keka-pro-extension/
 - **SPA Compatibility** - Handles dynamic content loading and navigation
 - **Enhanced Calculations** - Robust time parsing with comprehensive error handling
 - **Status Detection** - Real-time clock-in status monitoring with multiple validation methods
-- **Break Calculations** - Accurate break time tracking and 8-hour completion predictions
+- **Early Clock-Out Detection** - Detects when user clocks out before completing required hours
+- **Break Calculations** - Accurate break time tracking and work hours completion predictions
 
 #### **Popup Interface** (`popup.js`)
 - **Tabbed Navigation** - Manages 3-tab interface (Dashboard, Schedule, Tasks) with smooth transitions
@@ -195,7 +265,10 @@ keka-pro-extension/
 - **Chrome Alarms** - Persistent task scheduling using browser APIs
 - **Task Execution** - Runs scheduled actions even when popup is closed
 - **Storage Management** - Handles task persistence and cleanup
-- **Auto Clock-Out** - Intelligent automatic clock-out scheduling after clock-in
+- **Auto Clock-Out** - Intelligent automatic clock-out based on **effective** work hours
+- **Early Clock-Out Reminders** - 3-minute interval reminders if clocked out before required hours
+- **Smart Detection** - Auto-stops reminders when user clocks back in or completes required hours
+- **Dynamic Calculations** - Estimates completion time based on current break rate
 - **Smart Notifications** - Clock-out reminders and task completion alerts
 - **Error Recovery** - Retry mechanisms for failed executions
 - **Debug Support** - Comprehensive alarm debugging and monitoring
@@ -267,12 +340,15 @@ Open browser developer tools (F12) and check the console for detailed logs:
 - 🎨 **Modern Tabbed Interface** - Dashboard, Schedule, and Tasks tabs
 - 🔘 **Enhanced Radio Buttons** - Card-style selection with hover effects
 - 🎯 **Improved UX** - Better form controls and visual feedback
-- 🔧 **Fixed Calculations** - Accurate 8-hour completion and break time with NaN protection
+- ⚙️ **Centralized Configuration** - Single constant to change work hours policy (8h → 9h)
+- 🔧 **Fixed Calculations** - Accurate work hours completion and break time with NaN protection
 - 🚀 **Background Service Worker** - Persistent task execution with Chrome alarms
 - 💫 **Visual Polish** - Gradient buttons, glass-morphism, smooth animations
 - 🛡️ **Enhanced Error Handling** - Comprehensive null reference protection and graceful fallbacks
 - 📱 **Compact Design** - Fixed dimensions (380×500px) without scrolling
-- 🔄 **Auto Clock-Out** - Intelligent automatic clock-out scheduling
+- 🔄 **Auto Clock-Out** - Intelligent automatic clock-out based on **effective** work hours
+- 🔔 **Early Clock-Out Reminders** - 3-minute reminders if clocked out before required hours
+- 🧠 **Smart Detection** - Auto-stops reminders when clocked back in or hours completed
 - 📊 **Real-Time Status Detection** - Advanced clock-in status monitoring
 - 🔔 **Smart Notifications** - Clock-out reminders and task notifications
 
@@ -312,8 +388,12 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 - **Dual HTML Structure** - Welcome page (index.html) and main interface (main.html)
 
 ### **🔧 Enhanced Functionality**
+- **Centralized Configuration** - Change work hours policy in one place (8h, 9h, 7.5h, etc.)
 - **Background Execution** - Scheduled tasks run via Chrome alarms
-- **Auto Clock-Out** - Intelligent automatic clock-out after 8+ hours
+- **Auto Clock-Out** - Intelligent automatic clock-out based on **effective** work hours
+- **Early Clock-Out Reminders** - 3-minute interval reminders if clocked out early
+- **Smart Auto-Stop** - Reminders stop when you clock back in or complete required hours
+- **Dynamic Calculations** - Estimates completion time based on current break patterns
 - **Smart Notifications** - Clock-out reminders and task alerts
 - **Improved Calculations** - Fixed time prediction algorithms with NaN protection
 - **Enhanced Error Handling** - Comprehensive null reference protection throughout

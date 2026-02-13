@@ -1,6 +1,6 @@
 {
-  "name": "keka-pro-extension",
-  "version": "3.0.0",
+  "name": "keka-pro",
+  "version": "4.0.0",
   "description": "Extension to modify Keka attendance page elements and more",
   "main": "manifest.json",
   "scripts": {
@@ -13,7 +13,7 @@
     "attendance",
     "productivity"
   ],
-  "author": "Your Name",
+  "author": "Developer No 1",
   "license": "MIT",
   "repository": {
     "type": "git",

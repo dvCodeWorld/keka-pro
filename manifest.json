@@ -19,13 +19,15 @@
     "128": "src/assets/icons/favicon.png"
   },
   "background": {
-    "service_worker": "src/background/background.js"
+    "service_worker": "src/background/background.js",
+    "type": "module"
   },
   "content_scripts": [
     {
       "matches": ["https://*.keka.com/*"],
       "js": ["src/content/content.js"],
-      "run_at": "document_idle"
+      "run_at": "document_idle",
+      "type": "module"
     }
   ],
   "permissions": [
