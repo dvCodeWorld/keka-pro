@@ -352,6 +352,9 @@ function observePageChanges() {
             const existing = document.querySelector('.keka-pro');
             if (existing) existing.remove();
             
+            // Reset auto clock-out trigger on navigation
+            autoClockOutTriggered = false;
+            
             // Reinitialize if on attendance page
             if (location.href.includes('#/me/attendance/logs')) {
                 setTimeout(init, 1000);
@@ -437,6 +440,9 @@ function startExtension() {
     
     // Start monitoring for clock-in status
     startClockInMonitoring();
+    
+    // Start watching for work hours completion
+    startWorkHoursCompletionWatcher();
 }
 
 // Clock-in status monitoring
@@ -473,14 +479,6 @@ function checkClockInStatus() {
         
         const isCurrentlyClockedIn = clockOutButton || (hasClockOutText && hasCurrentTime);
         
-        console.log('Keka Pro: Clock-in status check:', {
-            hasClockOutButton: !!clockOutButton,
-            hasClockOutText,
-            hasCurrentTime,
-            isCurrentlyClockedIn,
-            previousStatus: previousClockInStatus
-        });
-        
         // Detect status change
         if (previousClockInStatus !== null) {
             // User was clocked in, now clocked out - detect early clock-out
@@ -489,87 +487,112 @@ function checkClockInStatus() {
                 handleDetectedClockOut();
             }
             // User was clocked out, now clocked in - stop early clock-out reminders
+            // and reset the auto clock-out guard so it can fire again next shift
             else if (previousClockInStatus === false && isCurrentlyClockedIn === true) {
                 console.log('Keka Pro: Clock-in detected!');
-                handleDetectedClockIn();
                 stopEarlyClockOutReminders();
+                // Reset background guard flag for next shift
+                if (chrome.runtime?.id) {
+                    chrome.storage.local.remove('autoClockOutDone').catch(() => {});
+                }
             }
         }
         
         // Update previous status
         previousClockInStatus = isCurrentlyClockedIn;
         
-        // If currently clocked in, ensure auto clock-out is scheduled
-        if (isCurrentlyClockedIn) {
-            handleDetectedClockIn();
-        }
-        
     } catch (error) {
         console.error('Keka Pro: Error checking clock-in status:', error);
     }
 }
 
-// Handle when we detect user is clocked in
-async function handleDetectedClockIn() {
-    // Check if extension context is valid before doing anything
-    if (!chrome.runtime?.id) {
-        console.log('Keka Pro: Extension context invalidated, skipping clock-in handling');
-        return;
-    }
+// ===== AUTO CLOCK-OUT ON WORK HOURS COMPLETION =====
+
+let autoClockOutTriggered = false;
+
+// Watch for "8 Hours At: Completed" and trigger auto clock-out
+function startWorkHoursCompletionWatcher() {
+    console.log('Keka Pro: Starting work hours completion watcher');
+    autoClockOutTriggered = false;
+    
+    const observer = new MutationObserver(() => {
+        if (!location.href.includes('#/me/attendance/logs')) return;
+        checkAndTriggerAutoClockOut();
+    });
+    
+    observer.observe(document.body, {
+        childList: true,
+        subtree: true,
+        characterData: true
+    });
+    
+    // Also check immediately and periodically
+    setTimeout(checkAndTriggerAutoClockOut, 3000);
+    setInterval(checkAndTriggerAutoClockOut, 15000);
+}
+
+// Check if work hours are completed and trigger clock-out
+function checkAndTriggerAutoClockOut() {
+    if (!location.href.includes('#/me/attendance/logs')) return;
+    if (autoClockOutTriggered) return;
     
     try {
-        // Check if auto clock-out is already scheduled
-        let response;
-        try {
-            response = await chrome.runtime.sendMessage({
-                action: 'debugAlarms'
-            });
-        } catch (error) {
-            if (error.message?.includes('Extension context invalidated')) {
-                console.log('Keka Pro: Extension context invalidated during debugAlarms check');
-                return;
+        // Look for the keka-pro info box with "Completed" text
+        const infoBox = document.querySelector('.keka-pro');
+        if (!infoBox) return;
+        
+        const infoText = infoBox.textContent || '';
+        const isCompleted = infoText.includes('Completed');
+        
+        if (!isCompleted) return;
+        
+        // Verify user is still clocked in (Web Clock-out button exists)
+        const clockOutButton = Array.from(document.querySelectorAll('button')).find(btn =>
+            btn.textContent.includes('Web Clock-out')
+        );
+        
+        if (!clockOutButton) return;
+        
+        console.log('Keka Pro: Work hours completed! Triggering auto clock-out...');
+        autoClockOutTriggered = true;
+        
+        // Show notification before clocking out
+        showNotification(`${REQUIRED_WORK_HOURS} hours completed! Auto clocking out...`, 'success');
+        
+        // Perform two-step clock-out after a short delay
+        setTimeout(async () => {
+            try {
+                const step1Result = performClockOutStep1();
+                console.log('Keka Pro: Auto clock-out step 1:', step1Result);
+                
+                if (step1Result.success) {
+                    // Step 2 after 2 seconds
+                    setTimeout(() => {
+                        performClockOutStep2();
+                        console.log('Keka Pro: Auto clock-out step 2 triggered');
+                        
+                        // Send notification via background
+                        if (chrome.runtime?.id) {
+                            chrome.notifications.create({
+                                type: 'basic',
+                                iconUrl: 'src/assets/icons/favicon.png',
+                                title: 'Keka Pro - Auto Clock-out',
+                                message: `You have been automatically clocked out after completing ${REQUIRED_WORK_HOURS} hours of effective work time.`
+                            }).catch(() => {});
+                        }
+                    }, 2000);
+                } else {
+                    console.error('Keka Pro: Auto clock-out step 1 failed:', step1Result.message);
+                    autoClockOutTriggered = false;
+                }
+            } catch (error) {
+                console.error('Keka Pro: Error during auto clock-out:', error);
+                autoClockOutTriggered = false;
             }
-            throw error;
-        }
-        
-        if (response && response.success) {
-            const hasAutoClockOut = response.debugInfo.kekaAlarms.some(alarm => 
-                alarm.name === 'keka-auto-clockout'
-            );
-            
-            if (hasAutoClockOut) {
-                console.log('Keka Pro: Auto clock-out already scheduled');
-                return;
-            }
-        }
-        
-        console.log('Keka Pro: Detected user is clocked in, scheduling auto clock-out');
-        
-        // Schedule auto clock-out
-        let scheduleResponse;
-        try {
-            scheduleResponse = await chrome.runtime.sendMessage({
-                action: 'clockInSuccess'
-            });
-        } catch (error) {
-            if (error.message?.includes('Extension context invalidated')) {
-                console.log('Keka Pro: Extension context invalidated during clockInSuccess');
-                return;
-            }
-            throw error;
-        }
-        
-        if (scheduleResponse && scheduleResponse.success) {
-            console.log('Keka Pro: Auto clock-out scheduled successfully');
-            
-            // Show a subtle notification
-            showNotification(`Auto clock-out scheduled for ${REQUIRED_WORK_HOURS} hours of effective work time`, 'success');
-        } else {
-            console.error('Keka Pro: Failed to schedule auto clock-out:', scheduleResponse?.message);
-        }
+        }, 1500);
         
     } catch (error) {
-        console.error('Keka Pro: Error handling detected clock-in:', error);
+        console.error('Keka Pro: Error in checkAndTriggerAutoClockOut:', error);
     }
 }
 
@@ -913,6 +936,18 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         case 'getAttendanceData':
             const attendanceData = getAttendanceData();
             sendResponse({ success: true, data: attendanceData });
+            break;
+
+        case 'getWorkHoursStatus':
+            // Used by background service worker to check if auto clock-out should fire
+            // Works even when this tab is in the background
+            const infoBox = document.querySelector('.keka-pro');
+            const infoText = infoBox ? (infoBox.textContent || '') : '';
+            const isCompleted = infoText.includes('Completed');
+            const isClockedIn = Array.from(document.querySelectorAll('button')).some(btn =>
+                btn.textContent.includes('Web Clock-out')
+            );
+            sendResponse({ isCompleted, isClockedIn });
             break;
             
         default:

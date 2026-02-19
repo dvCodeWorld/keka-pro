@@ -25,7 +25,25 @@ class KekaProBackground {
             return true; // Keep message channel open
         });
 
+        // Start periodic work hours completion check (runs even when Keka tab is in background)
+        this.startWorkHoursPolling();
+
         console.log('Keka Pro: Background service worker initialized');
+    }
+
+    /**
+     * Start a recurring alarm to poll Keka tab for work hours completion.
+     * This ensures auto clock-out fires even when the Keka tab is not active.
+     */
+    async startWorkHoursPolling() {
+        // Clear any existing polling alarm first
+        await chrome.alarms.clear('keka-workhours-check');
+        // Poll every 1 minute
+        await chrome.alarms.create('keka-workhours-check', {
+            delayInMinutes: 1,
+            periodInMinutes: 1
+        });
+        console.log('Keka Pro: Work hours polling alarm started (every 1 minute)');
     }
 
     /**
@@ -49,18 +67,6 @@ class KekaProBackground {
             case 'getScheduledTasks':
                 const tasks = await this.getScheduledTasks();
                 sendResponse({ success: true, tasks });
-                break;
-            
-            case 'clockInSuccess':
-                const autoClockOutResult = await this.scheduleAutoClockOut();
-                const stopNotificationsResult = await this.stopClockOutReminders();
-                sendResponse(autoClockOutResult);
-                break;
-            
-            case 'clockOutSuccess':
-                const cancelAutoResult = await this.cancelAutoClockOut();
-                const startNotificationsResult = await this.startClockOutReminders();
-                sendResponse(cancelAutoResult);
                 break;
             
             case 'earlyClockOut':
@@ -167,12 +173,16 @@ class KekaProBackground {
     async handleScheduledTask(alarm) {
         console.log(`Keka Pro: Alarm triggered: ${alarm.name} at ${new Date().toLocaleString()}`);
         
-        if (!alarm.name.startsWith('keka-task-') && alarm.name !== 'keka-auto-clockout' && alarm.name !== 'keka-clockout-reminder' && alarm.name !== 'keka-early-clockout-reminder') {
+        if (!alarm.name.startsWith('keka-task-') && alarm.name !== 'keka-clockout-reminder' && alarm.name !== 'keka-early-clockout-reminder' && alarm.name !== 'keka-workhours-check') {
             console.log(`Keka Pro: Ignoring non-Keka alarm: ${alarm.name}`);
             return;
         }
         
-        // Handle early clock-out reminder notifications (before 8 hours effective)
+        if (alarm.name === 'keka-workhours-check') {
+            await this.checkWorkHoursAndAutoClockOut();
+            return;
+        }
+
         if (alarm.name === 'keka-early-clockout-reminder') {
             await this.handleEarlyClockOutReminderAlarm();
             return;
@@ -274,158 +284,63 @@ class KekaProBackground {
     }
 
     /**
-     * Schedule automatic clock-out after required hours of EFFECTIVE time
+     * Poll the Keka tab (active or background) for work hours completion.
+     * Triggers two-step auto clock-out when "8 Hours At: Completed" is detected.
      */
-    async scheduleAutoClockOut() {
+    async checkWorkHoursAndAutoClockOut() {
         try {
-            // Cancel any existing auto clock-out
-            await this.cancelAutoClockOut();
-            
-            // Get current attendance data from the active Keka tab
+            // Find Keka tab (may be in background)
             const tabs = await chrome.tabs.query({ url: 'https://*.keka.com/*' });
-            
-            let effectiveMinutes = 0;
-            let grossMinutes = 0;
-            
-            if (tabs.length > 0) {
-                try {
-                    const response = await chrome.tabs.sendMessage(tabs[0].id, {
-                        action: 'getAttendanceData'
-                    });
-                    
-                    if (response && response.success && response.data) {
-                        effectiveMinutes = response.data.effectiveMinutes || 0;
-                        grossMinutes = response.data.grossMinutes || 0;
-                        console.log(`Keka Pro: Current attendance - Effective: ${effectiveMinutes}m, Gross: ${grossMinutes}m`);
-                    }
-                } catch (error) {
-                    console.log('Keka Pro: Could not get attendance data, using defaults:', error);
-                }
-            }
-            
-            // Calculate remaining effective minutes needed to reach required work hours
-            const remainingEffectiveMinutes = REQUIRED_WORK_MINUTES - effectiveMinutes;
-            
-            // If already at or past required hours, clock out in 1 minute
-            if (remainingEffectiveMinutes <= 0) {
-                console.log(`Keka Pro: Already at ${REQUIRED_WORK_HOURS} hours effective time, scheduling immediate clock-out`);
-                const autoClockOutTime = new Date(Date.now() + 1 * 60 * 1000);
-                
-                const taskData = {
-                    id: 'auto-clockout',
-                    action: 'out',
-                    scheduledTime: autoClockOutTime,
-                    status: 'pending',
-                    createdAt: new Date(),
-                    isAutoClockOut: true
-                };
-                
-                const alarmName = 'keka-auto-clockout';
-                await chrome.alarms.create(alarmName, { delayInMinutes: 1 });
-                await chrome.storage.local.set({
-                    [alarmName]: taskData,
-                    autoClockOutScheduled: true,
-                    autoClockOutTime: autoClockOutTime.toISOString()
+            if (tabs.length === 0) return;
+
+            const tab = tabs[0];
+
+            // Ask content script if work hours are completed and user is clocked in
+            let statusResponse;
+            try {
+                statusResponse = await chrome.tabs.sendMessage(tab.id, {
+                    action: 'getWorkHoursStatus'
                 });
-                
-                return { success: true, message: `Auto clock-out scheduled (${REQUIRED_WORK_HOURS} hours completed)`, scheduledTime: autoClockOutTime };
+            } catch (error) {
+                // Content script not ready yet (page still loading)
+                return;
             }
-            
-            // Calculate break rate and estimate when required hours effective will be reached
-            const breakMinutes = grossMinutes - effectiveMinutes;
-            let estimatedAdditionalGrossMinutes;
-            
-            if (effectiveMinutes > 0) {
-                // Calculate break rate based on current data
-                const breakRate = breakMinutes / effectiveMinutes;
-                const reasonableBreakRate = Math.max(0, Math.min(breakRate, 2)); // Cap at 200%
-                
-                // Estimate additional gross time needed (including future breaks)
-                estimatedAdditionalGrossMinutes = remainingEffectiveMinutes * (1 + reasonableBreakRate);
-                console.log(`Keka Pro: Break rate: ${(breakRate * 100).toFixed(1)}%, Estimated additional gross time: ${estimatedAdditionalGrossMinutes.toFixed(1)}m`);
-            } else {
-                // No effective time yet, assume 10% break rate
-                estimatedAdditionalGrossMinutes = remainingEffectiveMinutes * 1.1;
-                console.log(`Keka Pro: No effective time yet, using default 10% break rate. Estimated gross time: ${estimatedAdditionalGrossMinutes.toFixed(1)}m`);
+
+            if (!statusResponse || !statusResponse.isCompleted || !statusResponse.isClockedIn) {
+                return;
             }
-            
-            // Add 1 minute buffer to ensure we're past required hours
-            const delayInMinutes = estimatedAdditionalGrossMinutes + 1;
-            const autoClockOutTime = new Date(Date.now() + delayInMinutes * 60 * 1000);
-            
-            const taskData = {
-                id: 'auto-clockout',
-                action: 'out',
-                scheduledTime: autoClockOutTime,
-                status: 'pending',
-                createdAt: new Date(),
-                isAutoClockOut: true,
-                basedOnEffectiveTime: true,
-                currentEffectiveMinutes: effectiveMinutes,
-                remainingEffectiveMinutes: remainingEffectiveMinutes
-            };
-            
-            const alarmName = 'keka-auto-clockout';
-            const actualDelay = Math.max(delayInMinutes, 1);
-            
-            console.log(`Keka Pro: Scheduling auto clock-out based on EFFECTIVE time:`);
-            console.log(`  - Current effective: ${effectiveMinutes}m (${(effectiveMinutes/60).toFixed(1)}h)`);
-            console.log(`  - Remaining effective needed: ${remainingEffectiveMinutes}m (${(remainingEffectiveMinutes/60).toFixed(1)}h)`);
-            console.log(`  - Estimated delay: ${actualDelay.toFixed(1)} minutes (${(actualDelay/60).toFixed(1)}h)`);
-            console.log(`  - Scheduled for: ${autoClockOutTime.toLocaleString()}`);
-            
-            // Create Chrome alarm
-            await chrome.alarms.create(alarmName, {
-                delayInMinutes: actualDelay
+
+            // Guard: don't trigger twice
+            const state = await chrome.storage.local.get('autoClockOutDone');
+            if (state.autoClockOutDone) return;
+
+            console.log('Keka Pro [BG]: Work hours completed on Keka tab, triggering auto clock-out');
+            await chrome.storage.local.set({ autoClockOutDone: true });
+
+            // Step 1: click Web Clock-out
+            const step1 = await chrome.tabs.sendMessage(tab.id, { action: 'clockOutStep1' });
+            console.log('Keka Pro [BG]: Auto clock-out step 1:', step1);
+
+            if (!step1 || !step1.success) {
+                await chrome.storage.local.remove('autoClockOutDone');
+                return;
+            }
+
+            // Step 2: confirm clock-out after 2.5 seconds
+            await new Promise(resolve => setTimeout(resolve, 2500));
+            await chrome.tabs.sendMessage(tab.id, { action: 'clockOutStep2' });
+            console.log('Keka Pro [BG]: Auto clock-out step 2 triggered');
+
+            // Show system notification
+            await chrome.notifications.create('keka-auto-clockout-done', {
+                type: 'basic',
+                iconUrl: 'src/assets/icons/favicon.png',
+                title: 'Keka Pro - Auto Clock-out',
+                message: `You have been automatically clocked out after completing ${REQUIRED_WORK_HOURS} hours of effective work time.`
             });
-            
-            // Verify alarm was created
-            const createdAlarm = await chrome.alarms.get(alarmName);
-            if (!createdAlarm) {
-                throw new Error('Failed to create Chrome alarm');
-            }
-            
-            console.log(`Keka Pro: Chrome alarm created successfully. Scheduled for: ${new Date(createdAlarm.scheduledTime).toLocaleString()}`);
-            
-            // Store task data
-            await chrome.storage.local.set({
-                [alarmName]: taskData,
-                autoClockOutScheduled: true,
-                autoClockOutTime: autoClockOutTime.toISOString()
-            });
-            
-            return { 
-                success: true, 
-                message: `Auto clock-out scheduled for ${REQUIRED_WORK_HOURS} hours effective time (in ~${(actualDelay/60).toFixed(1)}h)`, 
-                scheduledTime: autoClockOutTime 
-            };
-            
+
         } catch (error) {
-            console.error('Keka Pro: Error scheduling auto clock-out:', error);
-            return { success: false, message: `Failed to schedule auto clock-out: ${error.message}` };
-        }
-    }
-    
-    /**
-     * Cancel automatic clock-out
-     */
-    async cancelAutoClockOut() {
-        try {
-            const alarmName = 'keka-auto-clockout';
-            
-            // Clear the alarm
-            const cleared = await chrome.alarms.clear(alarmName);
-            console.log(`Keka Pro: Auto clock-out alarm cleared: ${cleared}`);
-            
-            // Remove from storage
-            await chrome.storage.local.remove([alarmName, 'clockInTime', 'autoClockOutScheduled', 'autoClockOutTime']);
-            
-            console.log('Keka Pro: Auto clock-out cancelled and storage cleaned');
-            return { success: true, message: 'Auto clock-out cancelled' };
-            
-        } catch (error) {
-            console.error('Keka Pro: Error cancelling auto clock-out:', error);
-            return { success: false, message: 'Failed to cancel auto clock-out' };
+            console.error('Keka Pro [BG]: Error in checkWorkHoursAndAutoClockOut:', error);
         }
     }
 
